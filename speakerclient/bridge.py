@@ -3,6 +3,8 @@ from __future__ import annotations
 import base64
 import json
 import math
+import queue
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -186,13 +188,19 @@ def capture_once(
     *,
     capture_device: str = DEFAULT_CAPTURE_DEVICE,
     duration_seconds: float = 5.0,
-    chunk_frames: int = 4800,
+    chunk_frames: int = 9600,
+    silence_peak_threshold: int = 24,
+    output_channels: int = 1,
+    gain: float = 0.35,
 ) -> SpeakerBridgeResult:
     return stream_to_ipad(
         client,
         capture_device=capture_device,
         duration_seconds=duration_seconds,
         chunk_frames=chunk_frames,
+        silence_peak_threshold=silence_peak_threshold,
+        output_channels=output_channels,
+        gain=gain,
     )
 
 
@@ -201,7 +209,9 @@ def route_test(
     *,
     capture_device: str = DEFAULT_CAPTURE_DEVICE,
     duration_seconds: float = 5.0,
-    chunk_frames: int = 4800,
+    chunk_frames: int = 9600,
+    output_channels: int = 1,
+    gain: float = 0.35,
 ) -> SpeakerBridgeResult:
     backend = _load_audio_backend()
     if not backend["ok"]:
@@ -247,19 +257,20 @@ def route_test(
                     captured, overflowed = in_stream.read(count)
                     if overflowed:
                         warnings.append("Capture stream reported overflow.")
-                    pcm = captured.astype(np.int16, copy=False).tobytes()
+                    output_samples = _prepare_output_samples(np, captured, output_channels=output_channels, gain=gain)
+                    pcm = output_samples.tobytes()
                     sequence += 1
                     response = client.send_chunk(
                         sequence=sequence,
                         sample_rate_hz=sample_rate_hz,
-                        channel_count=channel_count,
-                        frame_count=int(captured.shape[0]),
+                        channel_count=int(output_samples.shape[1]),
+                        frame_count=int(output_samples.shape[0]),
                         pcm_s16le=pcm,
                         source="windows-vbcable-route-test",
                     )
                     scheduled = scheduled or bool(response.get("playbackScheduled") or response.get("ok"))
                     chunks_sent += 1
-                    frames_sent += int(captured.shape[0])
+                    frames_sent += int(output_samples.shape[0])
                     bytes_sent += len(pcm)
                     chunk_peak, _chunk_rms, chunk_sum_squares, chunk_sample_count = _sample_stats(captured)
                     peak_abs = max(peak_abs, chunk_peak)
@@ -290,7 +301,9 @@ def route_test(
         warnings=warnings,
         extra={
             "sample_rate_hz": sample_rate_hz,
-            "channel_count": channel_count,
+            "capture_channel_count": channel_count,
+            "channel_count": max(1, min(2, output_channels)),
+            "gain": gain,
             "duration_seconds": duration_seconds,
             "windows_playback_device": "CABLE Input",
             "windows_playback_device_found": True,
@@ -303,7 +316,10 @@ def stream_to_ipad(
     *,
     capture_device: str = DEFAULT_CAPTURE_DEVICE,
     duration_seconds: float | None = None,
-    chunk_frames: int = 4800,
+    chunk_frames: int = 9600,
+    silence_peak_threshold: int = 24,
+    output_channels: int = 1,
+    gain: float = 0.35,
 ) -> SpeakerBridgeResult:
     backend = _load_audio_backend()
     if not backend["ok"]:
@@ -324,9 +340,13 @@ def stream_to_ipad(
 
     sample_rate_hz = int(capture.get("default_samplerate") or 48000)
     channel_count = min(2, max(1, int(capture.get("max_input_channels") or 1)))
-    chunks_sent = 0
-    frames_sent = 0
-    bytes_sent = 0
+    stats = {
+        "chunks_sent": 0,
+        "frames_sent": 0,
+        "bytes_sent": 0,
+        "post_failures": 0,
+        "silent_chunks_skipped": 0,
+    }
     peak_abs = 0
     sum_squares = 0.0
     sample_count = 0
@@ -335,11 +355,40 @@ def stream_to_ipad(
     warnings: list[str] = []
     command = "capture_once" if duration_seconds is not None else "stream"
     deadline = None if duration_seconds is None else time.monotonic() + max(0.1, duration_seconds)
+    send_queue: queue.Queue[JsonDict | None] = queue.Queue(maxsize=24)
+    send_lock = threading.Lock()
+    sender_started = False
+
+    def sender() -> None:
+        nonlocal scheduled
+        while True:
+            item = send_queue.get()
+            if item is None:
+                send_queue.task_done()
+                break
+            try:
+                response = client.send_chunk(**item)
+                with send_lock:
+                    scheduled = scheduled or bool(response.get("playbackScheduled") or response.get("ok"))
+                    stats["chunks_sent"] += 1
+                    stats["frames_sent"] += int(item["frame_count"])
+                    stats["bytes_sent"] += len(item["pcm_s16le"])
+            except Exception as exc:
+                with send_lock:
+                    stats["post_failures"] += 1
+                    if len(errors) < 5:
+                        errors.append(str(exc))
+            finally:
+                send_queue.task_done()
 
     try:
         client.start()
+        sender_thread = threading.Thread(target=sender, name="speaker-chunk-sender", daemon=True)
+        sender_thread.start()
+        sender_started = True
         with sd.InputStream(samplerate=sample_rate_hz, channels=channel_count, dtype="int16", device=capture["index"]) as stream:
             sequence = 0
+            silence_tail_chunks = 0
             while deadline is None or time.monotonic() < deadline:
                 frames = chunk_frames
                 if deadline is not None:
@@ -350,29 +399,53 @@ def stream_to_ipad(
                 samples, overflowed = stream.read(frames)
                 if overflowed:
                     warnings.append("Capture stream reported overflow.")
-                pcm = samples.astype(np.int16, copy=False).tobytes()
-                sequence += 1
-                response = client.send_chunk(
-                    sequence=sequence,
-                    sample_rate_hz=sample_rate_hz,
-                    channel_count=channel_count,
-                    frame_count=int(samples.shape[0]),
-                    pcm_s16le=pcm,
-                    source="windows-vbcable-output",
-                )
-                scheduled = scheduled or bool(response.get("playbackScheduled") or response.get("ok"))
-                chunks_sent += 1
-                frames_sent += int(samples.shape[0])
-                bytes_sent += len(pcm)
                 chunk_peak, chunk_rms, chunk_sum_squares, chunk_sample_count = _sample_stats(samples)
                 peak_abs = max(peak_abs, chunk_peak)
                 sum_squares += chunk_sum_squares
                 sample_count += chunk_sample_count
+
+                if duration_seconds is None and silence_peak_threshold > 0:
+                    if chunk_peak <= silence_peak_threshold:
+                        if silence_tail_chunks <= 0:
+                            stats["silent_chunks_skipped"] += 1
+                            continue
+                        silence_tail_chunks -= 1
+                    else:
+                        silence_tail_chunks = 1
+
+                sequence += 1
+                output_samples = _prepare_output_samples(np, samples, output_channels=output_channels, gain=gain)
+                pcm = output_samples.tobytes()
+                item = {
+                    "sequence": sequence,
+                    "sample_rate_hz": sample_rate_hz,
+                    "channel_count": int(output_samples.shape[1]),
+                    "frame_count": int(output_samples.shape[0]),
+                    "pcm_s16le": pcm,
+                    "source": "windows-vbcable-output",
+                }
+                try:
+                    send_queue.put(item, timeout=0.5)
+                except queue.Full:
+                    warnings.append("Network sender queue full; dropping oldest speaker chunk.")
+                    try:
+                        send_queue.get_nowait()
+                        send_queue.task_done()
+                    except queue.Empty:
+                        pass
+                    send_queue.put(item, timeout=0.5)
     except KeyboardInterrupt:
         warnings.append("Interrupted by user.")
     except Exception as exc:
         errors.append(str(exc))
     finally:
+        if sender_started:
+            try:
+                send_queue.put(None, timeout=1.0)
+                send_queue.join()
+                sender_thread.join(timeout=3.0)
+            except Exception as exc:
+                warnings.append(f"sender stop: {exc}")
         try:
             client.stop()
         except Exception as exc:
@@ -381,10 +454,10 @@ def stream_to_ipad(
     rms = round(math.sqrt(sum_squares / sample_count), 3) if sample_count else None
     return SpeakerBridgeResult(
         command=command,
-        ok=chunks_sent > 0 and scheduled and not errors,
-        chunks_sent=chunks_sent,
-        frames_sent=frames_sent,
-        bytes_sent=bytes_sent,
+        ok=stats["chunks_sent"] > 0 and scheduled and not errors,
+        chunks_sent=stats["chunks_sent"],
+        frames_sent=stats["frames_sent"],
+        bytes_sent=stats["bytes_sent"],
         peak_abs=peak_abs if sample_count else None,
         rms=rms,
         capture_device=capture_device,
@@ -394,8 +467,13 @@ def stream_to_ipad(
         warnings=warnings,
         extra={
             "sample_rate_hz": sample_rate_hz,
-            "channel_count": channel_count,
+            "capture_channel_count": channel_count,
+            "channel_count": max(1, min(2, output_channels)),
+            "gain": gain,
             "duration_seconds": duration_seconds,
+            "post_failures": stats["post_failures"],
+            "silent_chunks_skipped": stats["silent_chunks_skipped"],
+            "silence_peak_threshold": silence_peak_threshold,
         },
     )
 
@@ -433,6 +511,7 @@ def _device_list(sd: Any) -> list[JsonDict]:
 
 def _find_device(devices: list[JsonDict], name: str, *, is_input: bool = False, is_output: bool = False) -> JsonDict | None:
     needle = name.lower()
+    candidates = []
     for device in devices:
         text = str(device.get("name", "")).lower()
         if needle in text:
@@ -440,8 +519,21 @@ def _find_device(devices: list[JsonDict], name: str, *, is_input: bool = False, 
                 continue
             if is_output and int(device.get("max_output_channels") or 0) < 1:
                 continue
-            return device
-    return None
+            candidates.append(device)
+    if not candidates:
+        return None
+
+    def score(device: JsonDict) -> tuple[int, int, int, int]:
+        rate = int(float(device.get("default_samplerate") or 0))
+        channels_key = "max_input_channels" if is_input else "max_output_channels"
+        channels = int(device.get(channels_key) or 0)
+        exact = 1 if str(device.get("name", "")).lower() == needle else 0
+        rate_score = 1 if rate == 48000 else 0
+        stereo_score = 1 if channels == 2 else 0
+        fewer_channels = -abs(channels - 2)
+        return (exact, rate_score, stereo_score, fewer_channels)
+
+    return sorted(candidates, key=score, reverse=True)[0]
 
 
 def _tone_chunk(*, sample_rate_hz: int, channel_count: int, frame_count: int, amplitude: int) -> bytes:
@@ -460,6 +552,21 @@ def _tone_array(np: Any, *, sample_rate_hz: int, channel_count: int, frame_count
     if channel_count == 1:
         return mono.reshape((-1, 1))
     return np.repeat(mono.reshape((-1, 1)), channel_count, axis=1)
+
+
+def _prepare_output_samples(np: Any, samples: Any, *, output_channels: int, gain: float) -> Any:
+    channels = max(1, min(2, int(output_channels or 1)))
+    scaled = samples.astype(np.float64, copy=False) * float(gain)
+    if channels == 1 and scaled.ndim == 2 and scaled.shape[1] > 1:
+        scaled = np.mean(scaled, axis=1, keepdims=True)
+    elif channels == 2:
+        if scaled.ndim == 1:
+            scaled = np.repeat(scaled.reshape((-1, 1)), 2, axis=1)
+        elif scaled.shape[1] == 1:
+            scaled = np.repeat(scaled, 2, axis=1)
+        elif scaled.shape[1] > 2:
+            scaled = scaled[:, :2]
+    return np.clip(np.rint(scaled), -32768, 32767).astype(np.int16)
 
 
 def _sample_stats(samples: Any) -> tuple[int, float, float, int]:

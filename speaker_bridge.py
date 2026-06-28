@@ -22,7 +22,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--timeout", type=float, default=10.0)
     parser.add_argument("--capture-device", default=DEFAULT_CAPTURE_DEVICE)
     parser.add_argument("--duration-seconds", type=float, default=5.0)
-    parser.add_argument("--chunk-frames", type=int, default=4800)
+    parser.add_argument("--chunk-frames", type=int, default=9600)
+    parser.add_argument("--silence-peak-threshold", type=int, default=24)
+    parser.add_argument("--output-channels", type=int, default=1)
+    parser.add_argument("--gain", type=float, default=0.35)
     return parser
 
 
@@ -59,6 +62,9 @@ def main(argv: list[str] | None = None) -> int:
                 capture_device=args.capture_device,
                 duration_seconds=args.duration_seconds,
                 chunk_frames=max(1, args.chunk_frames),
+                silence_peak_threshold=max(0, args.silence_peak_threshold),
+                output_channels=max(1, min(2, args.output_channels)),
+                gain=max(0.0, min(2.0, args.gain)),
             ).to_json()
         elif command == "route_test":
             payload = route_test(
@@ -66,6 +72,8 @@ def main(argv: list[str] | None = None) -> int:
                 capture_device=args.capture_device,
                 duration_seconds=args.duration_seconds,
                 chunk_frames=max(1, args.chunk_frames),
+                output_channels=max(1, min(2, args.output_channels)),
+                gain=max(0.0, min(2.0, args.gain)),
             ).to_json()
         elif command == "stream":
             payload = stream_to_ipad(
@@ -73,6 +81,9 @@ def main(argv: list[str] | None = None) -> int:
                 capture_device=args.capture_device,
                 duration_seconds=None,
                 chunk_frames=max(1, args.chunk_frames),
+                silence_peak_threshold=max(0, args.silence_peak_threshold),
+                output_channels=max(1, min(2, args.output_channels)),
+                gain=max(0.0, min(2.0, args.gain)),
             ).to_json()
         else:
             payload = {"ok": False, "error": {"code": "unknown_command", "message": f"Unknown command: {args.command}"}}

@@ -130,7 +130,7 @@ namespace SensorBridge.Speaker.App
             header.Controls.Add(title);
 
             Label subtitle = new Label();
-            subtitle.Text = "Windows audio to iPhone/iPad speaker through VB-CABLE";
+            subtitle.Text = "HTTP diagnostic bridge; WebRTC/Opus is the production speaker path";
             subtitle.ForeColor = Color.FromArgb(244, 242, 214);
             subtitle.AutoSize = true;
             subtitle.Location = new Point(2, 43);
@@ -325,7 +325,7 @@ namespace SensorBridge.Speaker.App
             info.RedirectStandardError = false;
             _streamProcess = Process.Start(info);
             _serviceValue.Text = "streaming";
-            _details.Text = "Streaming CABLE Output to iPad speaker. Set Windows or the source app playback device to CABLE Input.";
+            _details.Text = "Streaming CABLE Output through the HTTP diagnostic bridge. Set Windows or the source app playback device to CABLE Input.";
         }
 
         private void StopStream()
@@ -388,8 +388,8 @@ namespace SensorBridge.Speaker.App
             _ipadValue.Text = "-";
             _volumeValue.Text = "-";
             _chunksValue.Text = "-";
-            _warningValue.Text = "single cable is one direction at a time";
-            _details.Text = "Set Windows/app playback to CABLE Input, then press Start. Use Test Route for a generated VB-CABLE-to-iPad tone.";
+            _warningValue.Text = "HTTP diagnostic; WebRTC/Opus planned";
+            _details.Text = "Set Windows/app playback to CABLE Input, then press Start. Use Test Route for a generated VB-CABLE-to-iPad tone. This HTTP PCM path is for diagnostics and temporary checks.";
         }
 
         private void RenderStatus(Dictionary<string, object> payload)
@@ -400,7 +400,7 @@ namespace SensorBridge.Speaker.App
             _ipadValue.Text = Bool(payload, "ipad_playback_scheduled") ? "playback scheduled" : "not scheduled";
             _volumeValue.Text = Join("peak ", Value(payload, "peak_abs"), " RMS ", Value(payload, "rms"));
             _chunksValue.Text = Join(Value(payload, "chunks_sent"), " chunks");
-            _warningValue.Text = "use a second cable for simultaneous mic+speaker";
+            _warningValue.Text = "HTTP diagnostic; watch droppedChunks";
             _details.Text = _json.Serialize(payload);
         }
 

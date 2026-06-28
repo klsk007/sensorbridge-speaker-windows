@@ -31,11 +31,14 @@ Do not run this on the same single VB-CABLE route at the same time as SensorBrid
 python .\speaker_bridge.py status
 python .\speaker_bridge.py --base-url http://192.168.0.24:27180 probe-ipad
 python .\speaker_bridge.py --base-url http://192.168.0.24:27180 --duration-seconds 5 capture-once
-python .\speaker_bridge.py --base-url http://192.168.0.24:27180 stream
+python .\speaker_bridge.py --base-url http://192.168.0.24:27180 --duration-seconds 0 webrtc-speaker
 python .\speaker_bridge.py --base-url http://192.168.0.24:27180 --duration-seconds 10 webrtc-speaker
+python .\speaker_bridge.py --base-url http://192.168.0.24:27180 stream
 powershell -ExecutionPolicy Bypass -File .\windows-app\SensorBridge.Speaker.App\build.ps1
 .\windows-app\SensorBridge.Speaker.App\bin\Release\SensorBridge.Speaker.App.exe
 ```
+
+`--duration-seconds 0 webrtc-speaker` runs the production WebRTC/Opus downlink until the process is stopped. The Windows GUI Start button uses this persistent WebRTC mode. The `stream` command remains the legacy HTTP diagnostic bridge.
 
 ## iPad Endpoint
 

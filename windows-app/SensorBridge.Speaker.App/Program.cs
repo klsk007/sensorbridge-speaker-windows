@@ -317,7 +317,7 @@ namespace SensorBridge.Speaker.App
         {
             if (_streamProcess != null && !_streamProcess.HasExited)
             {
-                _serviceValue.Text = "streaming";
+                _serviceValue.Text = "webrtc streaming";
                 return;
             }
 
@@ -325,15 +325,15 @@ namespace SensorBridge.Speaker.App
             string python = ResolvePython();
             ProcessStartInfo info = new ProcessStartInfo();
             info.FileName = python == "py" ? "py" : python;
-            info.Arguments = BuildArguments(python, bridge, "stream");
+            info.Arguments = BuildArguments(python, bridge, "webrtc-speaker", "0");
             info.WorkingDirectory = _options.ProjectRoot;
             info.UseShellExecute = false;
             info.CreateNoWindow = true;
             info.RedirectStandardOutput = false;
             info.RedirectStandardError = false;
             _streamProcess = Process.Start(info);
-            _serviceValue.Text = "streaming";
-            _details.Text = "Streaming CABLE Output through the HTTP diagnostic bridge. Set Windows or the source app playback device to CABLE Input.";
+            _serviceValue.Text = "webrtc streaming";
+            _details.Text = "Streaming CABLE Output through WebRTC/Opus until Stop is pressed. HTTP chunk remains diagnostic only.";
         }
 
         private void StopStream()
@@ -374,11 +374,16 @@ namespace SensorBridge.Speaker.App
 
         private string BuildArguments(string python, string bridge, string command)
         {
+            return BuildArguments(python, bridge, command, Convert.ToString(_options.DurationSeconds));
+        }
+
+        private string BuildArguments(string python, string bridge, string command, string durationSeconds)
+        {
             return (python == "py" ? "-3 " : "") +
                 Quote(bridge) +
                 " --base-url " + Quote(_baseUrlText.Text) +
                 " --capture-device " + Quote(_captureText.Text) +
-                " --duration-seconds " + _options.DurationSeconds +
+                " --duration-seconds " + durationSeconds +
                 " " + command;
         }
 
@@ -397,7 +402,7 @@ namespace SensorBridge.Speaker.App
             _volumeValue.Text = "-";
             _chunksValue.Text = "-";
             _warningValue.Text = "HTTP diagnostic; WebRTC/Opus planned";
-            _details.Text = "Set Windows/app playback to CABLE Input. Start uses the HTTP diagnostic bridge; WebRTC Test uses the production Opus downlink contract.";
+            _details.Text = "Set Windows/app playback to CABLE Input. Start uses the production WebRTC/Opus downlink; HTTP Test is diagnostic only.";
         }
 
         private void RenderStatus(Dictionary<string, object> payload)

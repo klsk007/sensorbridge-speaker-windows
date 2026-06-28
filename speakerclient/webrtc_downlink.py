@@ -225,9 +225,9 @@ async def run_webrtc_speaker_downlink_async(
         if answer is None:
             raise RuntimeError(f"WebRTC offer response did not include localDescription answer: {answer_payload}")
         await pc.setRemoteDescription(RTCSessionDescription(sdp=answer["sdp"], type=answer["type"]))
-        deadline = time.monotonic() + max(1.0, duration_seconds)
+        deadline = None if duration_seconds <= 0 else time.monotonic() + max(1.0, duration_seconds)
         last_status_at = 0.0
-        while time.monotonic() < deadline:
+        while deadline is None or time.monotonic() < deadline:
             await asyncio.sleep(0.25)
             stats = await pc.getStats()
             outbound_packets, outbound_bytes = _outbound_audio_totals(stats)

@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "User-mode Windows speaker bridge for sending VB-CABLE audio to iPhone/iPad SensorBridge."
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = ["numpy>=1.26", "sounddevice>=0.5.5"]
+dependencies = ["aiortc>=1.14", "av>=16.0", "numpy>=1.26", "sounddevice>=0.5.5"]
 
 [tool.setuptools]
 py-modules = ["speaker_bridge"]

@@ -10,6 +10,13 @@ The current `POST /api/v1/speaker/chunk` path is a legacy diagnostic/app-level b
 
 Production speaker playback should move to a standard realtime media transport, preferably a WebRTC audio track with Opus. HTTP PCM chunks should remain a control/status fallback and test path, not the final continuous speaker transport. Extending the HTTP path indefinitely would require custom jitter buffering, clock drift handling, pacing, resampling, packet loss recovery, reconnection, backpressure, and audio-level control.
 
+The WebRTC/Opus downlink uses `POST /api/v2/webrtc/offer` for signaling and `GET /api/v2/webrtc/status` for evidence. A production-ready run should show Windows outbound audio packets and iPad inbound speaker downlink fields separately:
+
+- Windows outbound: `windows_outbound.packets_sent > 0`, `windows_outbound.bytes_sent > 0`
+- iPad inbound: `speakerDownlinkTrackReady == true`, `speakerDownlinkPacketsReceived > 0`, `speakerDownlinkBytesReceived > 0`, `speakerDownlinkStatsFresh == true`, `speakerDownlinkState == receiving_webrtc_opus`
+
+If the physical iPad app has not yet been rebuilt with speaker downlink status support, Windows can still show outbound WebRTC packets while the `speakerDownlink*` fields remain absent. Treat that as a deployment mismatch, not production speaker success.
+
 ## Route
 
 - Windows playback target: `CABLE Input`
@@ -25,6 +32,7 @@ python .\speaker_bridge.py status
 python .\speaker_bridge.py --base-url http://192.168.0.24:27180 probe-ipad
 python .\speaker_bridge.py --base-url http://192.168.0.24:27180 --duration-seconds 5 capture-once
 python .\speaker_bridge.py --base-url http://192.168.0.24:27180 stream
+python .\speaker_bridge.py --base-url http://192.168.0.24:27180 --duration-seconds 10 webrtc-speaker
 powershell -ExecutionPolicy Bypass -File .\windows-app\SensorBridge.Speaker.App\build.ps1
 .\windows-app\SensorBridge.Speaker.App\bin\Release\SensorBridge.Speaker.App.exe
 ```

@@ -11,6 +11,7 @@ from speakerclient import (
     inspect_audio_route,
     probe_ipad_speaker,
     route_test,
+    run_webrtc_speaker_downlink,
     stream_to_ipad,
 )
 
@@ -26,6 +27,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--silence-peak-threshold", type=int, default=24)
     parser.add_argument("--output-channels", type=int, default=1)
     parser.add_argument("--gain", type=float, default=0.35)
+    parser.add_argument("--webrtc-frame-samples", type=int, default=960)
+    parser.add_argument("--no-video-recvonly", action="store_true")
     return parser
 
 
@@ -43,6 +46,10 @@ def normalize_command(command: str) -> str:
         "route_test": "route_test",
         "stream": "stream",
         "start": "stream",
+        "webrtcspeaker": "webrtc_speaker",
+        "webrtc_speaker": "webrtc_speaker",
+        "webrtcdownlink": "webrtc_speaker",
+        "webrtc_downlink": "webrtc_speaker",
     }
     return aliases.get(key) or aliases.get(compact) or key
 
@@ -84,6 +91,17 @@ def main(argv: list[str] | None = None) -> int:
                 silence_peak_threshold=max(0, args.silence_peak_threshold),
                 output_channels=max(1, min(2, args.output_channels)),
                 gain=max(0.0, min(2.0, args.gain)),
+            ).to_json()
+        elif command == "webrtc_speaker":
+            payload = run_webrtc_speaker_downlink(
+                base_url=args.base_url,
+                capture_device=args.capture_device,
+                duration_seconds=args.duration_seconds,
+                frame_samples=max(160, args.webrtc_frame_samples),
+                gain=max(0.0, min(2.0, args.gain)),
+                output_channels=max(1, min(2, args.output_channels)),
+                include_video_recvonly=not args.no_video_recvonly,
+                timeout=args.timeout,
             ).to_json()
         else:
             payload = {"ok": False, "error": {"code": "unknown_command", "message": f"Unknown command: {args.command}"}}

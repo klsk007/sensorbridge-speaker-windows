@@ -75,6 +75,7 @@ namespace SensorBridge.Speaker.App
         private Button _stopButton;
         private Button _refreshButton;
         private Button _testButton;
+        private Button _webrtcButton;
         private Label _serviceValue;
         private Label _routeValue;
         private Label _ipadValue;
@@ -150,26 +151,27 @@ namespace SensorBridge.Speaker.App
 
             _baseUrlText = new TextBox();
             _baseUrlText.Text = _options.BaseUrl;
-            _baseUrlText.Width = 290;
+            _baseUrlText.Width = 250;
             _baseUrlText.Location = new Point(72, 8);
             toolbar.Controls.Add(_baseUrlText);
 
             Label captureLabel = new Label();
             captureLabel.Text = "Capture";
             captureLabel.AutoSize = true;
-            captureLabel.Location = new Point(374, 11);
+            captureLabel.Location = new Point(334, 11);
             toolbar.Controls.Add(captureLabel);
 
             _captureText = new TextBox();
             _captureText.Text = _options.CaptureDevice;
-            _captureText.Width = 125;
-            _captureText.Location = new Point(430, 8);
+            _captureText.Width = 96;
+            _captureText.Location = new Point(390, 8);
             toolbar.Controls.Add(_captureText);
 
-            _startButton = AddToolbarButton(toolbar, "Start", 568, delegate { StartStream(); });
-            _stopButton = AddToolbarButton(toolbar, "Stop", 650, delegate { StopStream(); });
-            _refreshButton = AddToolbarButton(toolbar, "Refresh", 728, delegate { RunStatus(); });
-            _testButton = AddToolbarButton(toolbar, "Test Route", 818, delegate { RunRouteTest(); });
+            _startButton = AddToolbarButton(toolbar, "Start", 500, delegate { StartStream(); });
+            _stopButton = AddToolbarButton(toolbar, "Stop", 578, delegate { StopStream(); });
+            _refreshButton = AddToolbarButton(toolbar, "Refresh", 656, delegate { RunStatus(); });
+            _testButton = AddToolbarButton(toolbar, "HTTP Test", 746, delegate { RunRouteTest(); });
+            _webrtcButton = AddToolbarButton(toolbar, "WebRTC", 842, delegate { RunWebRTCTest(); });
 
             TableLayoutPanel statusGrid = new TableLayoutPanel();
             statusGrid.Dock = DockStyle.Fill;
@@ -184,9 +186,9 @@ namespace SensorBridge.Speaker.App
             _serviceValue = AddCard(statusGrid, 0, 0, "Service");
             _routeValue = AddCard(statusGrid, 1, 0, "VB-CABLE");
             _ipadValue = AddCard(statusGrid, 2, 0, "iPad");
-            _volumeValue = AddCard(statusGrid, 0, 1, "Volume");
-            _chunksValue = AddCard(statusGrid, 1, 1, "Chunks");
-            _warningValue = AddCard(statusGrid, 2, 1, "Route note");
+            _volumeValue = AddCard(statusGrid, 0, 1, "Windows outbound");
+            _chunksValue = AddCard(statusGrid, 1, 1, "iPad downlink");
+            _warningValue = AddCard(statusGrid, 2, 1, "Transport note");
 
             _details = new TextBox();
             _details.Dock = DockStyle.Fill;
@@ -218,7 +220,8 @@ namespace SensorBridge.Speaker.App
             _trayMenu.Items.Add("Open", null, delegate { RestoreFromTray(); });
             _trayMenu.Items.Add("Start", null, delegate { RestoreFromTray(); StartStream(); });
             _trayMenu.Items.Add("Stop", null, delegate { StopStream(); });
-            _trayMenu.Items.Add("Test Route", null, delegate { RestoreFromTray(); RunRouteTest(); });
+            _trayMenu.Items.Add("HTTP Test", null, delegate { RestoreFromTray(); RunRouteTest(); });
+            _trayMenu.Items.Add("WebRTC Test", null, delegate { RestoreFromTray(); RunWebRTCTest(); });
             _trayMenu.Items.Add(new ToolStripSeparator());
             _trayMenu.Items.Add("Exit", null, delegate { _allowExit = true; Close(); });
 
@@ -277,6 +280,11 @@ namespace SensorBridge.Speaker.App
         private void RunRouteTest()
         {
             RunBridgeInBackground("route-test", "testing route...");
+        }
+
+        private void RunWebRTCTest()
+        {
+            RunBridgeInBackground("webrtc-speaker", "testing WebRTC...");
         }
 
         private void RunBridgeInBackground(string command, string label)
@@ -389,18 +397,30 @@ namespace SensorBridge.Speaker.App
             _volumeValue.Text = "-";
             _chunksValue.Text = "-";
             _warningValue.Text = "HTTP diagnostic; WebRTC/Opus planned";
-            _details.Text = "Set Windows/app playback to CABLE Input, then press Start. Use Test Route for a generated VB-CABLE-to-iPad tone. This HTTP PCM path is for diagnostics and temporary checks.";
+            _details.Text = "Set Windows/app playback to CABLE Input. Start uses the HTTP diagnostic bridge; WebRTC Test uses the production Opus downlink contract.";
         }
 
         private void RenderStatus(Dictionary<string, object> payload)
         {
             bool ok = Bool(payload, "ok");
-            _serviceValue.Text = ok ? "ready" : "not ready";
+            string command = Value(payload, "command");
+            bool isWebRtc = Value(payload, "transport") == "webrtc_opus_downlink" || command == "webrtc_speaker";
+            _serviceValue.Text = ok ? (isWebRtc ? "webrtc ok" : "ready") : (isWebRtc ? "webrtc pending" : "not ready");
             _routeValue.Text = Bool(payload, "capture_device_found") ? Value(payload, "capture_device") : "CABLE Output missing";
-            _ipadValue.Text = Bool(payload, "ipad_playback_scheduled") ? "playback scheduled" : "not scheduled";
-            _volumeValue.Text = Join("peak ", Value(payload, "peak_abs"), " RMS ", Value(payload, "rms"));
-            _chunksValue.Text = Join(Value(payload, "chunks_sent"), " chunks");
-            _warningValue.Text = "HTTP diagnostic; watch droppedChunks";
+            if (isWebRtc)
+            {
+                _ipadValue.Text = Join("state ", Nested(payload, "ipad_inbound", "speakerDownlinkState"));
+                _volumeValue.Text = Join(Nested(payload, "windows_outbound", "packets_sent"), " packets / ", Nested(payload, "windows_outbound", "bytes_sent"), " bytes");
+                _chunksValue.Text = Join(Nested(payload, "ipad_inbound", "speakerDownlinkPacketsReceived"), " packets / ", Nested(payload, "ipad_inbound", "speakerDownlinkBytesReceived"), " bytes");
+                _warningValue.Text = BoolNested(payload, "ipad_inbound", "speakerDownlinkStatsFresh") ? "WebRTC/Opus production" : "waiting for iPad downlink stats";
+            }
+            else
+            {
+                _ipadValue.Text = Bool(payload, "ipad_playback_scheduled") ? "playback scheduled" : "not scheduled";
+                _volumeValue.Text = Join("peak ", Value(payload, "peak_abs"), " RMS ", Value(payload, "rms"));
+                _chunksValue.Text = Join(Value(payload, "chunks_sent"), " chunks");
+                _warningValue.Text = "HTTP diagnostic; watch droppedChunks";
+            }
             _details.Text = _json.Serialize(payload);
         }
 
@@ -452,6 +472,7 @@ namespace SensorBridge.Speaker.App
             _startButton.Enabled = enabled;
             _refreshButton.Enabled = enabled;
             _testButton.Enabled = enabled;
+            _webrtcButton.Enabled = enabled;
         }
 
         private void Ui(MethodInvoker action)
@@ -474,6 +495,23 @@ namespace SensorBridge.Speaker.App
             if (value is bool) { return (bool)value; }
             bool parsed;
             return Boolean.TryParse(Convert.ToString(value), out parsed) && parsed;
+        }
+
+        private static string Nested(Dictionary<string, object> root, string parentKey, string key)
+        {
+            object parent;
+            if (root == null || !root.TryGetValue(parentKey, out parent) || parent == null) { return ""; }
+            Dictionary<string, object> dictionary = parent as Dictionary<string, object>;
+            if (dictionary == null) { return ""; }
+            return Value(dictionary, key);
+        }
+
+        private static bool BoolNested(Dictionary<string, object> root, string parentKey, string key)
+        {
+            object parent;
+            if (root == null || !root.TryGetValue(parentKey, out parent) || parent == null) { return false; }
+            Dictionary<string, object> dictionary = parent as Dictionary<string, object>;
+            return dictionary != null && Bool(dictionary, key);
         }
 
         private static string Join(params string[] parts)

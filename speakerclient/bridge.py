@@ -188,7 +188,7 @@ def capture_once(
     *,
     capture_device: str = DEFAULT_CAPTURE_DEVICE,
     duration_seconds: float = 5.0,
-    chunk_frames: int = 9600,
+    chunk_frames: int = 1920,
     silence_peak_threshold: int = 24,
     output_channels: int = 1,
     gain: float = 0.35,
@@ -209,7 +209,7 @@ def route_test(
     *,
     capture_device: str = DEFAULT_CAPTURE_DEVICE,
     duration_seconds: float = 5.0,
-    chunk_frames: int = 9600,
+    chunk_frames: int = 1920,
     output_channels: int = 1,
     gain: float = 0.35,
 ) -> SpeakerBridgeResult:
@@ -305,6 +305,7 @@ def route_test(
             "channel_count": max(1, min(2, output_channels)),
             "gain": gain,
             "duration_seconds": duration_seconds,
+            "chunk_frames": chunk_frames,
             "windows_playback_device": "CABLE Input",
             "windows_playback_device_found": True,
         },
@@ -316,7 +317,7 @@ def stream_to_ipad(
     *,
     capture_device: str = DEFAULT_CAPTURE_DEVICE,
     duration_seconds: float | None = None,
-    chunk_frames: int = 9600,
+    chunk_frames: int = 1920,
     silence_peak_threshold: int = 24,
     output_channels: int = 1,
     gain: float = 0.35,
@@ -355,7 +356,8 @@ def stream_to_ipad(
     warnings: list[str] = []
     command = "capture_once" if duration_seconds is not None else "stream"
     deadline = None if duration_seconds is None else time.monotonic() + max(0.1, duration_seconds)
-    send_queue: queue.Queue[JsonDict | None] = queue.Queue(maxsize=24)
+    queue_limit_chunks = max(2, int(math.ceil((sample_rate_hz * 0.16) / max(1, chunk_frames))))
+    send_queue: queue.Queue[JsonDict | None] = queue.Queue(maxsize=queue_limit_chunks)
     send_lock = threading.Lock()
     sender_started = False
 
@@ -427,7 +429,8 @@ def stream_to_ipad(
                 try:
                     send_queue.put(item, timeout=0.5)
                 except queue.Full:
-                    warnings.append("Network sender queue full; dropping oldest speaker chunk.")
+                    if not warnings or warnings[-1] != "Network sender queue full; dropping oldest speaker chunk.":
+                        warnings.append("Network sender queue full; dropping oldest speaker chunk.")
                     try:
                         send_queue.get_nowait()
                         send_queue.task_done()
@@ -474,6 +477,8 @@ def stream_to_ipad(
             "post_failures": stats["post_failures"],
             "silent_chunks_skipped": stats["silent_chunks_skipped"],
             "silence_peak_threshold": silence_peak_threshold,
+            "chunk_frames": chunk_frames,
+            "queue_limit_chunks": queue_limit_chunks,
         },
     )
 

@@ -22,7 +22,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--timeout", type=float, default=10.0)
     parser.add_argument("--capture-device", default=DEFAULT_CAPTURE_DEVICE)
     parser.add_argument("--duration-seconds", type=float, default=5.0)
-    parser.add_argument("--chunk-frames", type=int, default=9600)
+    parser.add_argument("--chunk-frames", type=int, default=1920)
     parser.add_argument("--silence-peak-threshold", type=int, default=24)
     parser.add_argument("--output-channels", type=int, default=1)
     parser.add_argument("--gain", type=float, default=0.35)

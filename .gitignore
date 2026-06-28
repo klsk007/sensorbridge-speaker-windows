@@ -1,0 +1,6 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+windows-app/**/bin/
+windows-app/**/obj/
+*.log
